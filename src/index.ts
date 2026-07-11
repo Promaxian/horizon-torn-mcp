@@ -74,7 +74,7 @@ app.get("/sse", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("X-Accel-Buffering", "no");
 
-    const transport = new SSEServerTransport("/messages");
+    const transport = new SSEServerTransport("/messages", res);
     transports.set(transport.sessionId, transport);
 
     // Add session ID header for client to use in subsequent POST requests
@@ -100,7 +100,7 @@ app.get("/sse", async (req, res) => {
 app.post("/messages", async (req, res) => {
   try {
     // Extract session ID from header or query parameter
-    const sessionId = (req.get("mcp-session-id") || req.query.sessionId) as string;
+    const sessionId = (req.get("mcp-session-id") || (req.query.sessionId as string)) as string;
 
     if (!sessionId) {
       res.status(400).json({ error: "Missing session ID" });
