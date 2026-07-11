@@ -1,8 +1,7 @@
 import "dotenv/config";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import express from "express";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 import { getConfig } from "./config.js";
@@ -59,75 +58,15 @@ for (const definition of TOOL_DEFINITIONS) {
   });
 }
 
-const app = express();
-app.use(express.json());
+// Use stdio transport - the standard MCP protocol over stdin/stdout
+async function run() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
 
-const transports = new Map<string, SSEServerTransport>();
-
-// SSE endpoint - GET establishes streaming connection
-app.get("/sse", async (req, res) => {
-  try {
-    // Set required SSE headers
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("X-Accel-Buffering", "no");
-
-    const transport = new SSEServerTransport("/messages", res);
-    transports.set(transport.sessionId, transport);
-
-    // Add session ID header for client to use in subsequent POST requests
-    res.setHeader("mcp-session-id", transport.sessionId);
-
-    res.on("close", () => {
-      transports.delete(transport.sessionId);
-    });
-
-    await server.connect(transport);
-  } catch (error) {
-    console.error("SSE connection error:", error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: "Failed to establish SSE connection",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  }
-});
-
-// Messages endpoint - POST receives client messages
-app.post("/messages", async (req, res) => {
-  try {
-    // Extract session ID from header or query parameter
-    const sessionId = (req.get("mcp-session-id") || (req.query.sessionId as string)) as string;
-
-    if (!sessionId) {
-      res.status(400).json({ error: "Missing session ID" });
-      return;
-    }
-
-    const transport = transports.get(sessionId);
-    if (!transport) {
-      res.status(400).json({ error: "Unknown or expired session ID" });
-      return;
-    }
-
-    await transport.handlePostMessage(req, res);
-  } catch (error) {
-    console.error("Message handler error:", error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: "Failed to handle message",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  }
-});
-
-const port = parseInt(process.env.PORT || "3000", 10);
-app.listen(port, "0.0.0.0", () => {
-  console.error(`MCP network server running on port ${port}`);
+run().catch((error) => {
+  console.error("Fatal error:", error);
+  process.exit(1);
 });
 
 function buildInputSchema(
