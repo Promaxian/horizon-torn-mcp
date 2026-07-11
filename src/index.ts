@@ -1,7 +1,8 @@
 import "dotenv/config";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import express from "express";
 import { z } from "zod";
 
 import { getConfig } from "./config.js";
@@ -58,15 +59,137 @@ for (const definition of TOOL_DEFINITIONS) {
   });
 }
 
-// Use stdio transport - the standard MCP protocol over stdin/stdout
-async function run() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
+const app = express();
+app.use(express.json());
 
-run().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
+// Map to store SSE transports by session ID
+const transports = new Map<string, SSEServerTransport>();
+
+/**
+ * POST /sse - Initialize a new SSE connection
+ * Client sends initialize request and receives session ID in response headers
+ */
+app.post("/sse", async (req, res) => {
+  try {
+    // Set required SSE and MCP headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    // Create transport and store by session ID
+    const transport = new SSEServerTransport("/messages", res);
+    const sessionId = transport.sessionId;
+    transports.set(sessionId, transport);
+
+    // Return session ID in response header
+    res.setHeader("mcp-session-id", sessionId);
+
+    // Clean up when connection closes
+    res.on("close", () => {
+      transports.delete(sessionId);
+    });
+
+    // Connect the server to this transport
+    await server.connect(transport);
+  } catch (error) {
+    console.error("SSE POST connection error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "Failed to establish SSE connection",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  }
+});
+
+/**
+ * GET /sse - Client upgrades connection to SSE stream
+ * This endpoint receives the session ID and upgrades to EventSource
+ */
+app.get("/sse", async (req, res) => {
+  try {
+    // Extract session ID from query or header
+    const sessionId = (req.query.sessionId as string) || req.get("mcp-session-id");
+
+    if (!sessionId) {
+      res.status(400).json({ error: "Missing session ID" });
+      return;
+    }
+
+    const transport = transports.get(sessionId);
+    if (!transport) {
+      res.status(400).json({ error: "Unknown or expired session ID" });
+      return;
+    }
+
+    // Connection already established in POST, this is handled by transport
+    // Just keep connection alive
+  } catch (error) {
+    console.error("SSE GET error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "Failed to handle SSE stream",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  }
+});
+
+/**
+ * POST /messages - Client sends messages to server
+ * Messages include the session ID to route to correct transport
+ */
+app.post("/messages", async (req, res) => {
+  try {
+    // Extract session ID from header (preferred) or query parameter
+    const sessionId = req.get("mcp-session-id") || (req.query.sessionId as string);
+
+    if (!sessionId) {
+      res.status(400).json({ error: "Missing session ID" });
+      return;
+    }
+
+    const transport = transports.get(sessionId);
+    if (!transport) {
+      res.status(400).json({ error: "Unknown or expired session ID" });
+      return;
+    }
+
+    // Forward message to transport
+    await transport.handlePostMessage(req, res);
+  } catch (error) {
+    console.error("Message handler error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "Failed to handle message",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  }
+});
+
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", name: "horizon-torn-mcp", version: "0.1.0" });
+});
+
+// CORS preflight
+app.options("*", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id");
+  res.sendStatus(204);
+});
+
+// Start server
+const port = parseInt(process.env.PORT || "3000", 10);
+app.listen(port, "0.0.0.0", () => {
+  console.error(`MCP server running on port ${port}`);
+  console.error(`POST http://localhost:${port}/sse to initialize`);
 });
 
 function buildInputSchema(
