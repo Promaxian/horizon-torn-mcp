@@ -64,37 +64,61 @@ app.use(express.json());
 
 const transports = new Map<string, SSEServerTransport>();
 
-app.all("/sse", async (req, res) => {
+// SSE endpoint - GET establishes streaming connection
+app.get("/sse", async (req, res) => {
   try {
-    if (req.method === "GET") {
-      // Handle SSE GET request - establish streaming connection
-      const transport = new SSEServerTransport("/sse", res);
-      transports.set(transport.sessionId, transport);
+    // Set required SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("X-Accel-Buffering", "no");
 
-      res.on("close", () => {
-        transports.delete(transport.sessionId);
-      });
+    const transport = new SSEServerTransport("/messages");
+    transports.set(transport.sessionId, transport);
 
-      await server.connect(transport);
-    } else if (req.method === "POST") {
-      // Handle POST request - receive messages from client
-      const sessionId = req.body?.sessionId as string;
-      const transport = transports.get(sessionId);
+    // Add session ID header for client to use in subsequent POST requests
+    res.setHeader("mcp-session-id", transport.sessionId);
 
-      if (!transport) {
-        res.status(400).json({ error: "Unknown or expired session ID" });
-        return;
-      }
+    res.on("close", () => {
+      transports.delete(transport.sessionId);
+    });
 
-      await transport.handlePostMessage(req, res);
-    } else {
-      res.status(405).json({ error: "Method not allowed" });
-    }
+    await server.connect(transport);
   } catch (error) {
-    console.error("SSE handler error:", error);
+    console.error("SSE connection error:", error);
     if (!res.headersSent) {
       res.status(500).json({
-        error: "Failed to handle SSE request",
+        error: "Failed to establish SSE connection",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  }
+});
+
+// Messages endpoint - POST receives client messages
+app.post("/messages", async (req, res) => {
+  try {
+    // Extract session ID from header or query parameter
+    const sessionId = (req.get("mcp-session-id") || req.query.sessionId) as string;
+
+    if (!sessionId) {
+      res.status(400).json({ error: "Missing session ID" });
+      return;
+    }
+
+    const transport = transports.get(sessionId);
+    if (!transport) {
+      res.status(400).json({ error: "Unknown or expired session ID" });
+      return;
+    }
+
+    await transport.handlePostMessage(req, res);
+  } catch (error) {
+    console.error("Message handler error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "Failed to handle message",
         message: error instanceof Error ? error.message : "Unknown error"
       });
     }
