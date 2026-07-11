@@ -1,8 +1,8 @@
 import "dotenv/config";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js"; // Changed transport
-import express from "express"; // Added Express
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import express from "express";
 import { z } from "zod";
 
 import { getConfig } from "./config.js";
@@ -60,46 +60,45 @@ for (const definition of TOOL_DEFINITIONS) {
 }
 
 const app = express();
+app.use(express.json());
+
 const transports = new Map<string, SSEServerTransport>();
 
-app.get("/sse", async (req, res) => {
+app.all("/sse", async (req, res) => {
   try {
-    // Set required SSE headers
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("X-Accel-Buffering", "no");
+    if (req.method === "GET") {
+      // Handle SSE GET request - establish streaming connection
+      const transport = new SSEServerTransport("/sse", res);
+      transports.set(transport.sessionId, transport);
 
-    const transport = new SSEServerTransport("/messages", res);
-    transports.set(transport.sessionId, transport);
+      res.on("close", () => {
+        transports.delete(transport.sessionId);
+      });
 
-    res.on("close", () => {
-      transports.delete(transport.sessionId);
-    });
+      await server.connect(transport);
+    } else if (req.method === "POST") {
+      // Handle POST request - receive messages from client
+      const sessionId = req.body?.sessionId as string;
+      const transport = transports.get(sessionId);
 
-    await server.connect(transport);
+      if (!transport) {
+        res.status(400).json({ error: "Unknown or expired session ID" });
+        return;
+      }
+
+      await transport.handlePostMessage(req, res);
+    } else {
+      res.status(405).json({ error: "Method not allowed" });
+    }
   } catch (error) {
-    console.error("SSE connection error:", error);
+    console.error("SSE handler error:", error);
     if (!res.headersSent) {
       res.status(500).json({
-        error: "Failed to establish SSE connection",
+        error: "Failed to handle SSE request",
         message: error instanceof Error ? error.message : "Unknown error"
       });
     }
   }
-});
-
-app.post("/messages", express.json(), async (req, res) => {
-  const sessionId = req.query.sessionId as string;
-  const transport = transports.get(sessionId);
-
-  if (!transport) {
-    res.status(400).send("Unknown or expired session ID");
-    return;
-  }
-
-  await transport.handlePostMessage(req, res);
 });
 
 const port = parseInt(process.env.PORT || "3000", 10);
