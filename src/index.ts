@@ -63,14 +63,31 @@ const app = express();
 const transports = new Map<string, SSEServerTransport>();
 
 app.get("/sse", async (req, res) => {
-  const transport = new SSEServerTransport("/messages", res);
-  transports.set(transport.sessionId, transport);
+  try {
+    // Set required SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("X-Accel-Buffering", "no");
 
-  res.on("close", () => {
-    transports.delete(transport.sessionId);
-  });
+    const transport = new SSEServerTransport("/messages", res);
+    transports.set(transport.sessionId, transport);
 
-  await server.connect(transport);
+    res.on("close", () => {
+      transports.delete(transport.sessionId);
+    });
+
+    await server.connect(transport);
+  } catch (error) {
+    console.error("SSE connection error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "Failed to establish SSE connection",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  }
 });
 
 app.post("/messages", express.json(), async (req, res) => {
