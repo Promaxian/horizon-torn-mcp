@@ -144,17 +144,55 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", name: "horizon-torn-mcp", version: "0.1.0" });
 });
 
-// Root endpoint - simple status page
+// MCP server discovery endpoint
+app.get("/.well-known/mcp.json", (req, res) => {
+  res.json({
+    mcpVersion: "2024-11-05",
+    name: "horizon-torn-mcp",
+    version: "0.1.0",
+    description: "MCP server exposing Torn City API v2 endpoints as tools",
+    protocolVersion: "2024-11-05",
+    capabilities: {
+      tools: true,
+      resources: false,
+      prompts: false
+    },
+    endpoints: {
+      streamableHttp: {
+        url: process.env.BASE_URL || "http://localhost:3000",
+        path: "/sse"
+      }
+    }
+  });
+});
+
+// Root endpoint - redirect or show API documentation
 app.get("/", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.json({
     name: "horizon-torn-mcp",
     version: "0.1.0",
     description: "MCP server exposing Torn City API v2 endpoints as tools",
+    documentation: {
+      mcp_discovery: "GET /.well-known/mcp.json",
+      initialize_connection: "POST /sse (with text/event-stream accept header)",
+      send_messages: "POST /messages (with mcp-session-id header from /sse response)"
+    },
     endpoints: {
       health: "GET /health",
-      sse: "POST /sse (initialize connection)",
-      messages: "POST /messages (send messages)"
+      sse: "POST /sse (initialize connection, returns mcp-session-id header)",
+      messages: "POST /messages (send messages with mcp-session-id header)",
+      discovery: "GET /.well-known/mcp.json"
     }
+  });
+});
+
+// Catch-all for undefined routes that might be POST
+app.post("/", (req, res) => {
+  res.status(400).json({
+    error: "Bad Request",
+    message: "POST / is not a valid endpoint. Use POST /sse to initialize the MCP connection.",
+    hint: "Check /.well-known/mcp.json for server discovery"
   });
 });
 
@@ -162,7 +200,7 @@ app.get("/", (req, res) => {
 app.options("*", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id, Accept");
   res.sendStatus(204);
 });
 
@@ -171,6 +209,7 @@ const port = parseInt(process.env.PORT || "3000", 10);
 app.listen(port, "0.0.0.0", () => {
   console.error(`MCP server running on port ${port}`);
   console.error(`POST http://localhost:${port}/sse to initialize`);
+  console.error(`GET http://localhost:${port}/.well-known/mcp.json for discovery`);
 });
 
 function buildInputSchema(
