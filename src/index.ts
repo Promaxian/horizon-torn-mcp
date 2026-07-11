@@ -107,39 +107,6 @@ app.post("/sse", async (req, res) => {
 });
 
 /**
- * GET /sse - Client upgrades connection to SSE stream
- * This endpoint receives the session ID and upgrades to EventSource
- */
-app.get("/sse", async (req, res) => {
-  try {
-    // Extract session ID from query or header
-    const sessionId = (req.query.sessionId as string) || req.get("mcp-session-id");
-
-    if (!sessionId) {
-      res.status(400).json({ error: "Missing session ID" });
-      return;
-    }
-
-    const transport = transports.get(sessionId);
-    if (!transport) {
-      res.status(400).json({ error: "Unknown or expired session ID" });
-      return;
-    }
-
-    // Connection already established in POST, this is handled by transport
-    // Just keep connection alive
-  } catch (error) {
-    console.error("SSE GET error:", error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: "Failed to handle SSE stream",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  }
-});
-
-/**
  * POST /messages - Client sends messages to server
  * Messages include the session ID to route to correct transport
  */
@@ -175,6 +142,20 @@ app.post("/messages", async (req, res) => {
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "ok", name: "horizon-torn-mcp", version: "0.1.0" });
+});
+
+// Root endpoint - simple status page
+app.get("/", (req, res) => {
+  res.json({
+    name: "horizon-torn-mcp",
+    version: "0.1.0",
+    description: "MCP server exposing Torn City API v2 endpoints as tools",
+    endpoints: {
+      health: "GET /health",
+      sse: "POST /sse (initialize connection)",
+      messages: "POST /messages (send messages)"
+    }
+  });
 });
 
 // CORS preflight
