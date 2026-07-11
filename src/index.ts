@@ -85,13 +85,11 @@ app.post("/messages", express.json(), async (req, res) => {
   await transport.handlePostMessage(req, res);
 });
 
-// 3. Bind to Render's required PORT environment variable
-const port = process.env.PORT || 3000;
+const port = parseInt(process.env.PORT || "3000", 10);
 app.listen(port, "0.0.0.0", () => {
   console.error(`MCP network server running on port ${port}`);
 });
 
-// --- HELPER FUNCTIONS ---
 function buildInputSchema(
   params: Array<{ name: string; required: boolean; description?: string }>
 ): Record<string, z.ZodTypeAny> {
