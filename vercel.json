@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build",
+  "env": {
+    "TORN_API_KEY": "@torn_api_key"
+  },
+  "functions": {
+    "api/**/*.js": {
+      "memory": 512,
+      "maxDuration": 30
+    }
+  }
+}
