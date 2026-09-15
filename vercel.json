@@ -1,7 +1,7 @@
 {
   "buildCommand": "npm run build",
   "env": {
-    "TORN_API_KEY": "@torn_api_key"
+    "TORN_API_KEY": "@TORN_API_KEY"
   },
   "functions": {
     "api/**/*.js": {
